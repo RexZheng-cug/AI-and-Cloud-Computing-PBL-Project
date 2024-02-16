@@ -5,6 +5,10 @@ class ClusterManager:
         self.client = docker.from_env()
 
     def create_cluster(self, image_name="ubuntu:latest", num_containers=8):
+        if not self.image_exists(image_name):
+            print(f"Error: Image '{image_name}' not found.")
+            return
+        
         for i in range(num_containers):
             container = self.client.containers.run(image_name, detach=True)
         print(f"Cluster created with {num_containers} containers using image '{image_name}'.")
@@ -28,6 +32,13 @@ class ClusterManager:
         for container in self.client.containers.list(all=True):
             container.remove(force=True)
         print("Cluster containers deleted.")
+    
+    def image_exists(self, image_name):
+        try:
+            self.client.images.get(image_name)
+            return True
+        except docker.errors.ImageNotFound:
+            return False
 
 # Command line interface
 def main():
@@ -60,14 +71,19 @@ def main():
             print("help: Display this help message")
             print("exit: Exit the program")
         elif command == "create":
-            if len(user_input) > 1:
-                image_name = user_input[1]
-            else:
+            if len(user_input) == 1:
                 image_name = "ubuntu:latest"
-            if len(user_input) > 2:
-                num_containers = int(user_input[2])
-            else:
                 num_containers = 8
+            elif len(user_input) == 2:
+                if user_input[1].isdigit():
+                    image_name = "ubuntu:latest"
+                    num_containers = int(user_input[1])
+                else:
+                    image_name = user_input[1]
+                    num_containers = 8
+            else:
+                image_name = user_input[1]
+                num_containers = int(user_input[2])
             cm.create_cluster(image_name, num_containers)
         elif command == "list":
             cm.list_cluster()
