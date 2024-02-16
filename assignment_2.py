@@ -1,4 +1,6 @@
 import docker
+import numpy as np
+import os
 
 class ClusterManager:
     def __init__(self):
@@ -37,6 +39,77 @@ class ClusterManager:
             container.remove(force=True)
         print("Cluster containers deleted.")
     
+    def create_data_volume(self):
+        self.client.volumes.create(name="data_volume", driver="local")
+        print("Data volume created.")
+        
+    def generate_random_data(self, data_size=100000):
+        file_path = "data.txt"
+        volume_name = "data_volume"
+        volume_path = f"/{volume_name}/{file_path}"  # 注意这里的路径需要加上数据卷的名称
+
+        # 生成随机数据
+        data = np.random.randint(0, 100, size=data_size)
+
+        # 将数据保存到本地文件中
+        with open(file_path, 'w') as file:
+            np.savetxt(file, data)
+
+        try:
+            # 获取数据卷路径
+            volume_info = self.client.volumes.get(volume_name)
+            container_volume_path = volume_info.attrs['Mountpoint']
+
+            # 将本地文件复制到容器中
+            container_file_path = os.path.join(container_volume_path, file_path)
+            with open(file_path, 'rb') as local_file:
+                container = self.client.containers.create("ubuntu:latest", command="sleep infinity", volumes={volume_name: {'bind': '/data', 'mode': 'rw'}})
+                container.start()
+                container.exec_run(f"mkdir -p /data")
+                container.put_archive('/data', local_file.read())
+
+            print("随机数据生成并复制到数据卷中.")
+        finally:
+            # 删除本地文件
+            os.remove(file_path)
+        print("Random data generated and copied to data volume.")
+    
+    def distribute_data_to_containers(self):
+        for container in self.client.containers.list():
+            container_id = container.id[:12]
+            command = f"cp /data/data.txt /app/data{container_id}.txt"
+            container.exec_run(command)
+        print("Data distributed to containers.")
+        
+    def run_processing_in_containers(self):
+        data_size = 100000  # 假设数据大小为 100000
+        data_per_container = data_size // len(self.client.containers.list())
+        results = {}
+
+        for idx, container in enumerate(self.client.containers.list()):
+            start_index = idx * data_per_container
+            end_index = (idx + 1) * data_per_container if idx != len(self.client.containers.list()) - 1 else data_size
+            command = f"python process_data.py {start_index} {end_index}"
+            exec_result = container.exec_run(command)
+            result = exec_result.output.decode().strip().split('\n')
+            results[container.short_id] = {
+                'sum': float(result[0]),
+                'average': float(result[1]),
+                'max': float(result[2]),
+                'min': float(result[3]),
+                'standard_deviation': float(result[4])
+            }
+
+        print("Processing completed in containers. Results:")
+        for container_id, result in results.items():
+            print(f"Container {container_id}:")
+            print(f"Sum: {result['sum']}")
+            print(f"Average: {result['average']}")
+            print(f"Max: {result['max']}")
+            print(f"Min: {result['min']}")
+            print(f"Standard Deviation: {result['standard_deviation']}")
+
+    
     def image_exists(self, image_name):
         try:
             self.client.images.get(image_name)
@@ -67,11 +140,15 @@ def main():
             break
         elif command == "help":
             print("Available commands:")
-            print("create [image_name] [num_containers]: Create a cluster with the specified number of containers (default is 8) using the specified image (default is ubuntu:latest)")
+            print("create: Create a cluster")
             print("list: List current containers in the cluster")
-            print("run [command]: Run a command in all containers of the cluster")
+            print("run: Run a command in all containers of the cluster")
             print("stop: Stop the cluster")
             print("delete: Delete the cluster")
+            print("volume: Create a data volume")
+            print("generate: Generate random data and copy it to the data volume")
+            print("distribute: Distribute data to containers")
+            print("process: Run data processing in containers")
             print("help: Display this help message")
             print("exit: Exit the program")
         elif command == "create":
@@ -101,6 +178,15 @@ def main():
             cm.stop_cluster()
         elif command == "delete":
             cm.delete_cluster()
+        elif command == "volume":
+            cm.create_data_volume()
+        elif command == "generate":
+            data_size = int(user_input[1]) if len(user_input) > 1 else 100000
+            cm.generate_random_data(data_size)
+        elif command == "distribute":
+            cm.distribute_data_to_containers()
+        elif command == "process":
+            cm.run_processing_in_containers()
         else:
             print("Error: Unknown command. Type 'help' for available commands.")
 
